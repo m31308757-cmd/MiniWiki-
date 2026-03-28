@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>MiniWiki Ultimate</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <style>
+    :root {
+      --bg:#f2f3f5; --panel:#fff; --text:#000;
+      --border:#d0d0d0; --btn:#f5f6f8; --highlight:#ffe066;
+    }
+    body.dark {
+      --bg:#1e1f22; --panel:#2b2d31; --text:#eaeaea;
+      --border:#3a3c42; --btn:#3a3c42; --highlight:#ffb703;
+    }
+    body {
+      margin:0;
+      font-family: system-ui;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      height: 100vh;
+    }
+    input,
+    textarea,
+    button {
+      background: var(--btn);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px;
+    }
+    /* Дополнительный CSS по желанию */
+  </style>
+</head>
+<body>
+<!-- Sidebar -->
+<aside>
+  <h3>📚 MiniWiki</h3>
+  <input id="globalSearch" placeholder="🔎 Поиск..." oninput="renderArticles()">
+  <div id="articles"></div>
+  <input id="newTitle" placeholder="Новая статья">
+  <button onclick="createArticle()">➕</button>
+  <button onclick="toggleTheme()">🌙 / ☀️</button>
+</aside>
+
+<!-- Main -->
+<main>
+  <div class="tabs" id="tabs"></div>
+  <div id="editor" class="editor hidden">
+    <input id="articleTitle" placeholder="Название статьи">
+    <textarea id="mainText" placeholder="Текст статьи..."></textarea>
+    <textarea id="sources" placeholder="Ссылки (каждая с новой строки)"></textarea>
+    <input id="tags" placeholder="Тэги">
+    <input id="categories" placeholder="Категории">
+    <div id="sourceStatus" style="font-size:12px;"></div>
+    <div>
+      <button onclick="toggleMode()">👁 / ✏️</button>
+      <button onclick="publishArticle()">🚀</button>
+      <button onclick="deleteArticle()">🗑</button>
+    </div>
+    <div id="preview" class="preview hidden"></div>
+    <div class="history">
+      <b>История</b>
+      <ul id="history"></ul>
+    </div>
+  </div>
+</main>
+
+<script>
+
+  // Firebase Конфиг
+  const firebaseConfig = {
+    apiKey: "AIzaSyAyQWYWeoY45xrTo_j-lQrK9RcQAATwmYM",
+    authDomain: "mini-wiki-26594.firebaseapp.com",
+    projectId: "mini-wiki-26594",
+    storageBucket: "mini-wiki-26594.firebasestorage.app",
+    messagingSenderId: "678803785040",
+    appId: "1:678803785040:web:aa94ceb023549489c85855"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+  let data = {};
+  let activeTab = "Главная";
+
+  // Загрузка статей
+  let loading = false;
+  async function loadFromFirebase() {
+    if (loading) return;
+    loading = true;
+    const snapshot = await db.collection("articles").get();
+    data = {};
+    snapshot.forEach(doc => {
+      const { title, text, sources, tags, categories, published } = doc.data();
+      data[doc.id] = doc.data();
+    });
+    if (!data["Главная"]) {
+      await db.collection("articles").doc("Главная").set({
+        title: "Главная",
+        text: "Добро пожаловать!",
+        sources: [],
+        tags: [],
+        categories: [],
+        published: false
+      });
+      data["Главная"] = { title: "Главная", text: "Добро пожаловать!", sources: [], tags: [], categories: [], published: false };
+    }
+    renderArticles();
+    openArticle("Главная");
+
+    // Инициируем тему с сохраненного состояния
+    const storedTheme = localStorage.getItem("theme");
+    if (storedTheme === "dark") {
+      document.body.classList.add("dark");
+    }
+
+    loading = false;
+  }
+
+  function openArticle(title) {
+    if (data[title]) {
+      activeTab = title;
+      document.querySelector(".tabs").innerHTML = "";
+      const tab = document.createElement("div");
+      tab.innerHTML = title;
+      tab.onclick = () => openArticle(title);
+      tab.classList.add("tab");
+      tab.classList.add("active");
+      document.querySelector(".tabs").appendChild(tab);
+      loadArticle(title);
+    }
+  }
+
+  function renderArticles() {
+    const q = document.getElementById("globalSearch").value.toLowerCase();
+    const section = document.getElementById("articles");
+    section.innerHTML = "";
+    Object.keys(data).forEach(title => {
+      const d = data[title];
+      if (
+        title.toLowerCase().includes(q) ||
+        d.text.toLowerCase().includes(q) ||
+        d.tags.some(t => t.toLowerCase().includes(q))
+      ) {
+        const btn = document.createElement("button");
+        btn.classList.add("article-btn");
+        btn.textContent = d.title + " " + (d.published ? "🟢" : "🟡");
+        btn.onclick = () => openArticle(title);
+        section.appendChild(btn);
+      }
+    });
+  }
+
+  function loadArticle(title) {
+    const d = data[title];
+    if (!d) return;
+    document.getElementById("articleTitle").value = d.title;
+    document.getElementById("mainText").value = d.text;
+    document.getElementById("sources").value = d.sources.join("\n");
+    document.getElementById("tags").value = d.tags.join(", ");
+    document.getElementById("categories").value = d.categories.join(", ");
+    updatePreview();
+    updateStatus();
+  }
+
+  function toggleTheme() {
+    const dark = document.body.classList.toggle("dark");
+    localStorage.setItem("theme", dark ? "dark" : "light");
+  }
+
+  // Создание статьи
+  async function createArticle() {
+    const name = document.getElementById("newTitle").value.trim();
+    if (!name || data[name] !== undefined) {
+      alert("Такая статья уже существует");
+      return;
+    }
+    await db.collection("articles").doc(name).set({
+      title: name,
+      text: "",
+      sources: [],
+      tags: [],
+      categories: [],
+      published: false
+    });
+    data[name] = { title: name, text: "", sources: [], tags: [], categories: [], published: false };
+    document.getElementById("newTitle").value = "";
+    openArticle(name);
+  }
+
+  // Публикация
+  async function publishArticle() {
+    if (!validateSources()) {
+      return;
+    }
+    await db.collection("articles").doc(activeTab).update({ published: true });
+    data[activeTab].published = true;
+    updateStatus();
+    alert("Статья опубликована!");
+  }
+
+  function validateSources() {
+    const links = document.getElementById("sources").value
+      .split("\n")
+      .map(s => s.trim())
+      .filter(Boolean);
+    if (links.length === 0) {
+      showMessage("❗ Добавьте источники", "orange");
+      return false;
+    }
+    for (let link of links) {
+      if (!/^https?:\/\/.+\..+$/.test(link)) {
+        showMessage("⚠️ Ссылка некорректна", "red");
+        return false;
+      }
+    }
+    showMessage("✅ Все ссылки корректны", "green");
+    return true;
+  }
+
+  function showMessage(msg, color) {
+    const status = document.getElementById("sourceStatus");
+    status.textContent = msg;
+    status.style.color = color;
+  }
+
+  // Удаление
+  async function deleteArticle() {
+    if (confirm("Удалить статью?")) {
+      await db.collection("articles").doc(activeTab).delete();
+      delete data[activeTab];
+      openArticle("Главная");
+    }
+  }
+
+  // Режим просмотра
+  function toggleMode() {
+    const mode = !document.getElementById("mainText").classList.contains("hidden");
+    document.getElementById("mainText").classList.toggle("hidden", !mode);
+    document.getElementById("preview").classList.toggle("hidden", mode);
+  }
+
+  function buildMarkdown() {
+    const title = document.getElementById("articleTitle").value;
+    const text = document.getElementById("mainText").value;
+    const sources = document.getElementById("sources").value;
+    let md = `# ${title}\n\n${text}\n\n`;
+    if (sources.trim()) {
+      md += "## Источники\n";
+      sources.split("\n").forEach(s => {
+        if (s.trim()) {
+          md += `- [${s}](${s})\n`;
+        }
+      });
+    }
+    return md;
+  }
+
+  function updatePreview() {
+    const preview = document.getElementById("preview");
+    preview.innerHTML = marked.parse(buildMarkdown());
+  }
+
+  function updateStatus() {
+    const status = document.getElementById("status");
+    if (data[activeTab] && data[activeTab].published) {
+      status.className = "status published";
+      status.textContent = "Опубликовано";
+    } else {
+      status.innerText = "Черновик";
+      status.className = "status draft";
+    }
+  }
+
+  function saveArticle() {
+    if (loading) return;
+    const title = document.getElementById("articleTitle").value.trim();
+    const text = document.getElementById("mainText").value;
+    const sources = document.getElementById("sources").value.split("\n").filter(Boolean);
+    const tags = document.getElementById("tags").value.split(",").map(s => s.trim()).filter(Boolean);
+    const categories = document.getElementById("categories").value.split(",").map(s => s.trim()).filter(Boolean);
+    data[activeTab] = {
+      title: title || "Без названия",
+      text,
+      sources,
+      tags,
+      categories,
+      published: data[activeTab]?.published || false,
+      content: buildMarkdown(),
+    };
+    db.collection("articles").doc(activeTab).set(data[activeTab]);
+  }
+
+  let saveTimer;
+  document.getElementById("articleTitle").addEventListener("input", () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveArticle, 800);
+  });
+  document.getElementById("mainText").addEventListener("input", () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveArticle, 800);
+  });
+  document.getElementById("sources").addEventListener("input", () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveArticle, 800);
+    validateSources();
+  });
+  document.getElementById("tags").addEventListener("input", () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveArticle, 800);
+  });
+  document.getElementById("categories").addEventListener("input", () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveArticle, 800);
+  });
+
+  window.onload = () => {
+    loadFromFirebase();
+    updatePreview();
+  };
+</script>
+</body>
+</html>
