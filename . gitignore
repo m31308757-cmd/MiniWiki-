@@ -1,0 +1,30 @@
+# .env files (хранит секреты)
+.env
+.env.local
+.env.*
+
+# Firebase (секреты и конфиги)
+firebase.json
+functions/firebase.json
+.functions/.firebaserc
+
+# Node modules
+node_modules/
+yarn.lock
+package-lock.json
+dependencies/
+
+# Директории сборки
+/dist/
+/build/
+/out/
+/public/
+
+# Файлы ОС
+*.DS_Store
+Thumbs.db
+
+# IDE конфигурации
+.vscode/
+.idea/
+*.suo
